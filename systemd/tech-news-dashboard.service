@@ -5,7 +5,7 @@ Description=Market Ledger editorial dashboard
 WorkingDirectory=%h/newspaper_dashboard
 EnvironmentFile=-%h/.config/tech-news/pages.env
 EnvironmentFile=-%h/.config/tech-news/shared.env
-ExecStart=/usr/bin/python3 dashboard.py serve
+ExecStart=%h/newspaper_dashboard/bin/market-ledger serve
 Restart=on-failure
 
 [Install]
