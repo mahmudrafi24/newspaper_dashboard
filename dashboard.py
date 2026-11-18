@@ -1,5 +1,5 @@
 import argparse
-from contextlib import closing
+from contextlib import closing, contextmanager
 import fcntl
 import html
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,10 +35,12 @@ def page(title, body, editor=False):
 <main class="wrap">{body}</main><footer class="wrap">Market Ledger · Trading and market news</footer></body></html>"""
 
 
-def public_page(db):
+def public_page(db, include_approved=False):
+    visible = ("published", "approved" if include_approved else "withdrawing")
     stories = db.execute("""
-        SELECT * FROM stories WHERE state='published' ORDER BY julianday(reported) DESC, id LIMIT 50
-    """).fetchall()
+        SELECT * FROM stories WHERE state IN (?, ?)
+        ORDER BY julianday(reported) DESC, id
+    """, visible).fetchall()
     template = (SITE / "index.html").read_text()
     if not stories:
         return template
@@ -75,42 +77,57 @@ def dashboard(db, deploy_failed=False):
     run = db.execute("SELECT * FROM runs ORDER BY rowid DESC LIMIT 1").fetchone()
     status = f"{run['at'][:16].replace('T', ' ')} UTC · {run['message']}" if run else "Waiting for the first research run"
     retry = ""
-    if deploy_failed or (run and run["message"].startswith("Cloudflare upload failed")):
-        retry = f"""<p role="alert">Saved on Oracle. The public site update failed.</p>
+    pending_upload = db.execute(
+        "SELECT 1 FROM stories WHERE state IN ('approved', 'withdrawing') LIMIT 1"
+    ).fetchone()
+    if deploy_failed or pending_upload:
+        retry = f"""<p role="alert">A public site update is pending. Retry if the last upload failed.</p>
 <form method="post" action="/admin"><input type="hidden" name="csrf" value="{CSRF}">
 <button name="action" value="retry">Retry site update</button></form>"""
     cards = []
+    labels = {
+        "draft": "Pending review", "approved": "Approved · Awaiting upload",
+        "published": "Published", "withdrawing": "Removal pending", "rejected": "Rejected",
+    }
     for story in db.execute("SELECT * FROM stories ORDER BY state != 'draft', reported DESC"):
-        drafts = story["state"] == "draft"
-        button = "Publish" if drafts else "Move to drafts"
+        state = story["state"]
+        buttons = {
+            "draft": '<button name="action" value="save">Save draft</button>'
+                     '<button class="primary" name="action" value="publish">Approve &amp; publish</button>'
+                     '<button name="action" value="reject">Reject</button>',
+            "approved": '<button name="action" value="draft">Return to review</button>' if story["published"] is None else "",
+            "published": '<button class="primary" name="action" value="publish">Approve &amp; publish edits</button>'
+                         '<button name="action" value="draft">Unpublish</button>',
+            "withdrawing": '<button class="primary" name="action" value="publish">Approve &amp; republish</button>',
+            "rejected": '<button name="action" value="draft">Return to review</button>',
+        }[state]
         name = e(story["headline"])
         summary = e(story["summary"])
-        cards.append(f"""<article><p class="meta">{e(story['state'].title())} · {e(story['desk'])} · {e(story['source'])} · {e(story['reported'][:10])}</p>
+        cards.append(f"""<article><p class="meta">{e(labels[state])} · {e(story['desk'])} · {e(story['source'])} · {e(story['reported'][:10])}</p>
 <p><a href="{e(story['url'])}">{e(story['original'])} ↗</a></p>
 <form method="post" action="/admin">
 <input type="hidden" name="csrf" value="{CSRF}"><input type="hidden" name="id" value="{e(story['id'])}">
 <label>Headline<input name="headline" value="{name}" required maxlength="115"></label>
 <label>Summary<textarea name="summary" required maxlength="350">{summary}</textarea></label>
-<button name="action" value="save">Save edits</button>
-<button class="primary" name="action" value="{'publish' if drafts else 'draft'}">{button}</button></form></article>""")
+{buttons}</form></article>""")
     content = "".join(cards) or '<p class="empty">New drafts will appear here after an hourly run succeeds.</p>'
     return page("Editorial dashboard", f'<h1>Editorial dashboard</h1><p class="status" data-revision="{current}">{e(status)}</p><p id="refresh-notice" role="status" hidden><a href="/admin">Research finished. Refresh the queue.</a></p>{retry}{content}', True)
 
 
-def export(db):
-    PUBLIC.mkdir(exist_ok=True)
+def export(db, directory, include_approved=False):
+    directory.mkdir(exist_ok=True)
     assets = {
-        "index.html": public_page(db),
+        "index.html": public_page(db, include_approved=include_approved),
         "style.css": (SITE / "style.css").read_text(),
         "share.js": (SITE / "share.js").read_text(),
         "market-brief-2026-11-18.html": (SITE / "market-brief-2026-11-18.html").read_text(),
         "october-market-review.html": (SITE / "october-market-review.html").read_text(),
     }
     for name, content in assets.items():
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=PUBLIC, delete=False) as output:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, delete=False) as output:
             output.write(content)
         os.chmod(output.name, 0o644)
-        os.replace(output.name, PUBLIC / name)
+        os.replace(output.name, directory / name)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -170,53 +187,93 @@ class Handler(BaseHTTPRequestHandler):
                 self.update_public(deploy=True)
                 return
             headline, summary = form["headline"].strip(), form["summary"].strip()
-            if not (1 <= len(headline) <= 115 and 1 <= len(summary) <= 350 and action in ("save", "publish", "draft")):
+            if not (1 <= len(headline) <= 115 and 1 <= len(summary) <= 350 and action in ("save", "publish", "draft", "reject")):
                 raise ValueError
             key = form["id"]
         except (ValueError, KeyError):
             self.send_error(400)
             return
 
-        with closing(database()) as db, db:
-            db.execute("BEGIN IMMEDIATE")
-            story = db.execute("SELECT state, published FROM stories WHERE id=?", (key,)).fetchone()
-            if story is None:
-                self.send_error(404)
-                return
-            state = {"publish": "published", "draft": "draft"}.get(action, story["state"])
-            published = (story["published"] or now().isoformat()) if state == "published" else None
-            db.execute("UPDATE stories SET headline=?, summary=?, state=?, published=? WHERE id=?",
-                       (headline, summary, state, published, key))
-        self.update_public(deploy=state == "published" or story["state"] == "published")
+        try:
+            needs_upload = edit_story(key, action, headline, summary)
+        except LookupError:
+            self.send_error(404)
+            return
+        except ValueError:
+            self.send_error(409)
+            return
+        self.update_public(deploy=needs_upload)
 
     def update_public(self, deploy):
         location = "/admin"
-        try:
-            refresh_public(deploy=deploy)
-        except (OSError, subprocess.SubprocessError) as error:
-            self.log_error("Public site update failed: %s", error)
-            location = "/admin?deploy=failed"
+        if deploy:
+            try:
+                refresh_public(deploy=True)
+            except (OSError, subprocess.SubprocessError) as error:
+                self.log_error("Public site update failed: %s", error)
+                location = "/admin?deploy=failed"
         self.send_response(303)
         self.send_header("Location", location)
         self.end_headers()
 
 
-def refresh_public(deploy=False):
-    with closing(database()) as db, db, (DATA / "deploy.lock").open("a") as lock:
+@contextmanager
+def publishing_lock():
+    DATA.mkdir(mode=0o700, exist_ok=True)
+    with (DATA / "deploy.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        export(db)
+        yield
+
+
+def edit_story(key, action, headline, summary):
+    with publishing_lock(), closing(database()) as db, db:
+        story = db.execute("SELECT * FROM stories WHERE id=?", (key,)).fetchone()
+        if story is None:
+            raise LookupError(key)
+        state = story["state"]
+        transitions = {
+            ("draft", "save"): "draft",
+            ("draft", "reject"): "rejected",
+            ("draft", "publish"): "approved",
+            ("approved", "draft"): "draft",
+            ("rejected", "draft"): "draft",
+            ("published", "publish"): "approved",
+            ("published", "draft"): "withdrawing",
+            ("withdrawing", "publish"): "approved",
+        }
+        next_state = transitions.get((state, action))
+        if next_state is None or (state == "approved" and action == "draft" and story["published"] is not None):
+            raise ValueError("Story state changed. Refresh the dashboard.")
+        if action not in ("save", "publish"):
+            headline, summary = story["headline"], story["summary"]
+        published = story["published"] if next_state in ("approved", "withdrawing") else None
+        db.execute("UPDATE stories SET headline=?, summary=?, state=?, published=? WHERE id=?",
+                   (headline, summary, next_state, published, key))
+        return next_state in ("approved", "withdrawing")
+
+
+def refresh_public(deploy=False):
+    with publishing_lock(), closing(database()) as db, db:
         if deploy:
-            subprocess.run(deploy_command(), cwd=ROOT, check=True, timeout=180)
+            with tempfile.TemporaryDirectory(prefix="market-ledger-upload-") as staging:
+                directory = Path(staging)
+                export(db, directory, include_approved=True)
+                subprocess.run(deploy_command(directory), cwd=ROOT, check=True, timeout=180)
+            db.execute("UPDATE stories SET state='published', published=COALESCE(published, ?) WHERE state='approved'",
+                       (now().isoformat(),))
+            db.execute("UPDATE stories SET state='draft', published=NULL WHERE state='withdrawing'")
+        else:
+            export(db, PUBLIC)
 
 
-def deploy_command():
+def deploy_command(directory):
     project = os.environ.get("CLOUDFLARE_PAGES_PROJECT")
     worker = os.environ.get("CLOUDFLARE_WORKER_NAME")
     wrangler = os.environ.get("WRANGLER_BIN", "wrangler")
     if worker and not project:
-        return [wrangler, "deploy", "--name", worker, "--assets", str(PUBLIC)]
+        return [wrangler, "deploy", "--name", worker, "--assets", str(directory)]
     if project and not worker:
-        return [wrangler, "pages", "deploy", str(PUBLIC), "--project-name=" + project, "--branch=main"]
+        return [wrangler, "pages", "deploy", str(directory), "--project-name=" + project, "--branch=main"]
     raise OSError("Configure one Cloudflare target in pages.env")
 
 
@@ -242,12 +299,7 @@ def main():
             parser.exit(1, f"{error}\n")
         if deploy:
             with closing(database()) as db, db:
-                last = db.execute("SELECT message FROM runs ORDER BY rowid DESC LIMIT 1").fetchone()
-                if last and "queued for upload" in last["message"]:
-                    message = last["message"].replace("queued for upload", "published", 1)
-                else:
-                    message = "Cloudflare upload complete"
-                db.execute("INSERT INTO runs VALUES (?, ?)", (now().isoformat(), message))
+                db.execute("INSERT INTO runs VALUES (?, ?)", (now().isoformat(), "Cloudflare upload complete"))
 
 
 if __name__ == "__main__":
