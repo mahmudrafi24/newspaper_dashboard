@@ -102,6 +102,7 @@ def export(db):
     assets = {
         "index.html": public_page(db),
         "style.css": (SITE / "style.css").read_text(),
+        "share.js": (SITE / "share.js").read_text(),
         "october-market-review.html": (SITE / "october-market-review.html").read_text(),
     }
     for name, content in assets.items():
@@ -133,7 +134,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/style.css":
             self.respond((SITE / "style.css").read_text(), "text/css; charset=utf-8")
-        elif path == "/october-market-review.html":
+        elif path == "/share.js":
+            self.respond((SITE / "share.js").read_text(), "text/javascript; charset=utf-8")
+        elif path in ("/october-market-review", "/october-market-review.html"):
             self.respond((SITE / "october-market-review.html").read_text())
         elif path == "/dashboard.js":
             self.respond((ROOT / "dashboard.js").read_text(), "text/javascript; charset=utf-8")
