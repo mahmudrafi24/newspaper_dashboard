@@ -23,3 +23,9 @@ Create a Pages Direct Upload project with production branch `main`. Install Wran
 Run `python3 dashboard.py deploy` with those variables exported to make the initial deployment. The dashboard deploys an updated copy whenever you publish, edit a published story, or move a published story back to drafts. Retry a failed upload using **Retry site update**. Only the published static site in `public/` is uploaded. The dashboard and SQLite files stay on Oracle.
 
 To render a copy locally, run `python3 dashboard.py export`. Approved stories link out to the corresponding Google News story.
+
+### If Cloudflare shows `npx wrangler deploy`
+
+That command belongs to Workers Builds. To use Cloudflare Pages, select **Workers & Pages → Create application → Pages**. For the live newsroom, use **Direct Upload** and deploy from Oracle as described above.
+
+To bootstrap a Pages project from GitHub instead, select **Pages → Connect to Git** and choose this repository. Set production branch to `main`, framework preset to **None**, build command to `sh build-pages.sh`, and build output directory to `public`. This build produces the public empty-state page and requires neither the bot repository nor a database. After the first build, turn off automatic production deployments before connecting Oracle so subsequent Git builds cannot replace the published stories. Oracle can still deploy to that Pages project with Wrangler.
