@@ -103,6 +103,7 @@ def export(db):
         "index.html": public_page(db),
         "style.css": (SITE / "style.css").read_text(),
         "share.js": (SITE / "share.js").read_text(),
+        "market-brief-2026-11-18.html": (SITE / "market-brief-2026-11-18.html").read_text(),
         "october-market-review.html": (SITE / "october-market-review.html").read_text(),
     }
     for name, content in assets.items():
@@ -136,8 +137,9 @@ class Handler(BaseHTTPRequestHandler):
             self.respond((SITE / "style.css").read_text(), "text/css; charset=utf-8")
         elif path == "/share.js":
             self.respond((SITE / "share.js").read_text(), "text/javascript; charset=utf-8")
-        elif path in ("/october-market-review", "/october-market-review.html"):
-            self.respond((SITE / "october-market-review.html").read_text())
+        elif path.rstrip("/").removesuffix(".html") in ("/october-market-review", "/market-brief-2026-11-18"):
+            edition = path.strip("/").removesuffix(".html")
+            self.respond((SITE / (edition + ".html")).read_text())
         elif path == "/dashboard.js":
             self.respond((ROOT / "dashboard.js").read_text(), "text/javascript; charset=utf-8")
         elif path == "/admin/revision":
