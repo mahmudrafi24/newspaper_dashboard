@@ -76,7 +76,7 @@ def dashboard(db, deploy_failed=False):
 
 def export(db):
     PUBLIC.mkdir(exist_ok=True)
-    for name, content in (("index.html", public_page(db)), ("style.css", (ROOT / "style.css").read_text())):
+    for name, content in (("index.html", public_page(db)), ("style.css", (ROOT / "site" / "style.css").read_text())):
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=PUBLIC, delete=False) as output:
             output.write(content)
         os.chmod(output.name, 0o644)
@@ -104,7 +104,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path).path
         if path == "/style.css":
-            self.respond((ROOT / "style.css").read_text(), "text/css; charset=utf-8")
+            self.respond((ROOT / "site" / "style.css").read_text(), "text/css; charset=utf-8")
         elif path == "/dashboard.js":
             self.respond((ROOT / "dashboard.js").read_text(), "text/javascript; charset=utf-8")
         elif path == "/admin/revision":
