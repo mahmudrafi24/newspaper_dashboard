@@ -15,3 +15,17 @@ async function checkResearch() {
 }
 
 window.setTimeout(checkResearch, 30000);
+
+for (const card of document.querySelectorAll("[data-editor-story]")) {
+  const fields = [
+    [card.querySelector("input[name=headline]"), card.querySelector("[data-preview-headline]")],
+    [card.querySelector("textarea[name=summary]"), card.querySelector("[data-preview-summary]")],
+  ];
+  for (const [input, preview] of fields) {
+    if (input) {
+      input.addEventListener("input", () => {
+        preview.textContent = input.value;
+      });
+    }
+  }
+}

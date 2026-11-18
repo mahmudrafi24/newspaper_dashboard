@@ -26,12 +26,13 @@ def e(value):
 
 
 def page(title, body, editor=False):
-    nav = '<a href="/admin">Dashboard</a>' if editor else ""
-    script = '<script src="/dashboard.js" defer></script>' if editor else ""
+    nav = '<a href="https://notasmuchhyped.mahmudrafi.workers.dev/">View public site ↗</a>' if editor else ""
+    assets = '<link rel="stylesheet" href="/editor.css"><script src="/dashboard.js" defer></script>' if editor else ""
+    body_class = ' class="editor"' if editor else ""
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{e(title)} · Market Ledger</title><link rel="stylesheet" href="/style.css">{script}</head>
-<body><header><div class="wrap mast"><a class="logo" href="/">Market<span> Ledger</span></a>{nav}</div></header>
+<title>{e(title)} · Market Ledger</title><link rel="stylesheet" href="/style.css">{assets}</head>
+<body{body_class}><header><div class="wrap mast"><a class="logo" href="/">Market<span> Ledger</span></a>{nav}</div></header>
 <main class="wrap">{body}</main><footer class="wrap">Market Ledger · Trading and market news</footer></body></html>"""
 
 
@@ -72,46 +73,97 @@ def revision(db):
     return str(db.execute("SELECT COALESCE(MAX(rowid), 0) FROM runs").fetchone()[0])
 
 
-def dashboard(db, deploy_failed=False):
+EDITOR_VIEWS = {
+    "review": ("Pending review", ("draft",)),
+    "upload": ("Awaiting upload", ("approved", "withdrawing")),
+    "published": ("Published", ("published",)),
+    "rejected": ("Rejected", ("rejected",)),
+}
+STORY_LABELS = {
+    "draft": "Pending review",
+    "approved": "Approved · Awaiting upload",
+    "withdrawing": "Removal pending",
+    "published": "Published",
+    "rejected": "Rejected",
+}
+STORY_ACTIONS = {
+    "draft": (("publish", "Approve & publish"), ("save", "Save draft"), ("reject", "Reject")),
+    "approved": (("draft", "Return to review"),),
+    "published": (("publish", "Approve & publish edits"), ("draft", "Unpublish")),
+    "withdrawing": (("publish", "Approve & republish"),),
+    "rejected": (("draft", "Return to review"),),
+}
+EMPTY_VIEW = {
+    "review": "New stories will appear here after an hourly research run.",
+    "upload": "There are no public site updates awaiting upload.",
+    "published": "There are no published stories in the editorial queue.",
+    "rejected": "No stories have been rejected.",
+}
+
+
+def editor_card(story):
+    state = story["state"]
+    headline, summary = e(story["headline"]), e(story["summary"])
+    editable = state in ("draft", "published", "withdrawing")
+    actions = () if state == "approved" and story["published"] is not None else STORY_ACTIONS[state]
+    buttons = []
+    for action, label in actions:
+        style = ' class="primary"' if action == "publish" else ""
+        buttons.append(f'<button type="submit" name="action" value="{action}"{style}>{e(label)}</button>')
+    copy_form = f"""<label>Headline<input name="headline" value="{headline}" required maxlength="115"></label>
+<label>Summary<textarea name="summary" required maxlength="350">{summary}</textarea></label>""" if editable else ""
+    form = f"""<form method="post" action="/admin">
+<input type="hidden" name="csrf" value="{CSRF}"><input type="hidden" name="id" value="{e(story['id'])}">
+{copy_form}<div class="editor-actions">{"".join(buttons)}</div></form>""" if actions else ""
+    return f"""<article class="editor-card" data-editor-story>
+<div class="editor-card-top"><span class="editor-badge" data-state="{state}">{e(STORY_LABELS[state])}</span>
+<span>{e(story['desk'])} · <time datetime="{e(story['reported'])}">{e(story['reported'][:10])}</time></span></div>
+<div class="editor-story">
+<div class="editor-preview">
+<p class="editor-kicker">Public preview</p>
+<h3 data-preview-headline>{headline}</h3>
+<p data-preview-summary>{summary}</p>
+<p class="editor-source"><strong>{e(story['source'])}</strong><br>
+<a href="{e(story['url'])}" target="_blank" rel="noopener noreferrer">{e(story['original'])} ↗</a></p>
+</div>
+{form}</div></article>"""
+
+
+def dashboard(db, deploy_failed=False, view="review"):
+    if view not in EDITOR_VIEWS:
+        view = "review"
     current = revision(db)
     run = db.execute("SELECT * FROM runs ORDER BY rowid DESC LIMIT 1").fetchone()
     status = f"{run['at'][:16].replace('T', ' ')} UTC · {run['message']}" if run else "Waiting for the first research run"
+    counts = dict(db.execute("SELECT state, COUNT(*) FROM stories GROUP BY state"))
+    tabs = []
+    for key, (label, states) in EDITOR_VIEWS.items():
+        active = ' aria-current="page"' if key == view else ""
+        count = sum(counts.get(state, 0) for state in states)
+        tabs.append(f'<a href="/admin?view={key}"{active}>{label} <span>{count}</span></a>')
+
     retry = ""
-    pending_upload = db.execute(
-        "SELECT 1 FROM stories WHERE state IN ('approved', 'withdrawing') LIMIT 1"
-    ).fetchone()
-    if deploy_failed or pending_upload:
-        retry = f"""<p role="alert">A public site update is pending. Retry if the last upload failed.</p>
+    if deploy_failed or counts.get("approved") or counts.get("withdrawing"):
+        message = "Upload failed. The approved update is saved." if deploy_failed else "An approved update is awaiting upload."
+        retry = f"""<div class="editor-upload" role="status"><p>{message}</p>
 <form method="post" action="/admin"><input type="hidden" name="csrf" value="{CSRF}">
-<button name="action" value="retry">Retry site update</button></form>"""
-    cards = []
-    labels = {
-        "draft": "Pending review", "approved": "Approved · Awaiting upload",
-        "published": "Published", "withdrawing": "Removal pending", "rejected": "Rejected",
-    }
-    for story in db.execute("SELECT * FROM stories ORDER BY state != 'draft', reported DESC"):
-        state = story["state"]
-        buttons = {
-            "draft": '<button name="action" value="save">Save draft</button>'
-                     '<button class="primary" name="action" value="publish">Approve &amp; publish</button>'
-                     '<button name="action" value="reject">Reject</button>',
-            "approved": '<button name="action" value="draft">Return to review</button>' if story["published"] is None else "",
-            "published": '<button class="primary" name="action" value="publish">Approve &amp; publish edits</button>'
-                         '<button name="action" value="draft">Unpublish</button>',
-            "withdrawing": '<button class="primary" name="action" value="publish">Approve &amp; republish</button>',
-            "rejected": '<button name="action" value="draft">Return to review</button>',
-        }[state]
-        name = e(story["headline"])
-        summary = e(story["summary"])
-        cards.append(f"""<article><p class="meta">{e(labels[state])} · {e(story['desk'])} · {e(story['source'])} · {e(story['reported'][:10])}</p>
-<p><a href="{e(story['url'])}">{e(story['original'])} ↗</a></p>
-<form method="post" action="/admin">
-<input type="hidden" name="csrf" value="{CSRF}"><input type="hidden" name="id" value="{e(story['id'])}">
-<label>Headline<input name="headline" value="{name}" required maxlength="115"></label>
-<label>Summary<textarea name="summary" required maxlength="350">{summary}</textarea></label>
-{buttons}</form></article>""")
-    content = "".join(cards) or '<p class="empty">New drafts will appear here after an hourly run succeeds.</p>'
-    return page("Editorial dashboard", f'<h1>Editorial dashboard</h1><p class="status" data-revision="{current}">{e(status)}</p><p id="refresh-notice" role="status" hidden><a href="/admin">Research finished. Refresh the queue.</a></p>{retry}{content}', True)
+<button type="submit" name="action" value="retry">Retry site update</button></form></div>"""
+
+    label, states = EDITOR_VIEWS[view]
+    placeholders = ", ".join("?" for _ in states)
+    entries = db.execute(f"SELECT * FROM stories WHERE state IN ({placeholders}) ORDER BY julianday(reported) DESC, id", states)
+    content = "".join(editor_card(story) for story in entries)
+    if not content:
+        content = f'<p class="empty">{EMPTY_VIEW[view]}</p>'
+    return page("Editorial dashboard", f"""<div class="editor-heading">
+<div><h1>Editorial dashboard</h1><p>Review and approve stories before they appear on Market Ledger.</p></div>
+<div class="editor-run"><strong>Latest activity</strong><p data-revision="{current}">{e(status)}</p></div>
+</div>
+<p id="refresh-notice" class="editor-notice" role="status" hidden><a href="/admin?view={view}">New research is ready. Refresh the queue.</a></p>
+{retry}
+<nav class="editor-tabs" aria-label="Story status">{"".join(tabs)}</nav>
+<section aria-labelledby="queue-heading"><h2 id="queue-heading" class="editor-queue-heading">{label}</h2>
+{content}</section>""", True)
 
 
 def export(db, directory, include_approved=False):
@@ -157,6 +209,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path.rstrip("/").removesuffix(".html") in ("/october-market-review", "/market-brief-2026-11-18"):
             edition = path.strip("/").removesuffix(".html")
             self.respond((SITE / (edition + ".html")).read_text())
+        elif path == "/editor.css":
+            self.respond((ROOT / "editor.css").read_text(), "text/css; charset=utf-8")
         elif path == "/dashboard.js":
             self.respond((ROOT / "dashboard.js").read_text(), "text/javascript; charset=utf-8")
         elif path == "/admin/revision":
@@ -164,7 +218,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(revision(db), "text/plain; charset=utf-8")
         elif path in ("/", "/admin"):
             with closing(database()) as db, db:
-                self.respond(dashboard(db, urlsplit(self.path).query == "deploy=failed") if path == "/admin" else public_page(db))
+                if path == "/admin":
+                    query = parse_qs(urlsplit(self.path).query)
+                    self.respond(dashboard(db, query.get("deploy") == ["failed"], query.get("view", ["review"])[0]))
+                else:
+                    self.respond(public_page(db))
         else:
             self.send_error(404)
 
@@ -186,8 +244,10 @@ class Handler(BaseHTTPRequestHandler):
             if action == "retry":
                 self.update_public(deploy=True)
                 return
-            headline, summary = form["headline"].strip(), form["summary"].strip()
-            if not (1 <= len(headline) <= 115 and 1 <= len(summary) <= 350 and action in ("save", "publish", "draft", "reject")):
+            if action not in ("save", "publish", "draft", "reject"):
+                raise ValueError
+            headline, summary = form.get("headline", "").strip(), form.get("summary", "").strip()
+            if action in ("save", "publish") and not (1 <= len(headline) <= 115 and 1 <= len(summary) <= 350):
                 raise ValueError
             key = form["id"]
         except (ValueError, KeyError):
