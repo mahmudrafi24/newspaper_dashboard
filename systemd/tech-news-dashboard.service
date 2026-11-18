@@ -1,0 +1,12 @@
+[Unit]
+Description=Tech Brief editorial dashboard
+
+[Service]
+WorkingDirectory=%h/newspaper_dashboard
+EnvironmentFile=-%h/.config/tech-news/pages.env
+EnvironmentFile=-%h/.config/tech-news/shared.env
+ExecStart=/usr/bin/python3 dashboard.py serve
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
