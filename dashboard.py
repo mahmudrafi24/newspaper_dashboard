@@ -37,26 +37,33 @@ def page(title, body, editor=False):
 
 def public_page(db):
     stories = db.execute("""
-        SELECT * FROM stories WHERE state='published' ORDER BY reported DESC, id
+        SELECT * FROM stories WHERE state='published' ORDER BY julianday(reported) DESC, id LIMIT 50
     """).fetchall()
     template = (SITE / "index.html").read_text()
     if not stories:
         return template
-    desks = list(dict.fromkeys(story["desk"] for story in stories))
+    lead, *remaining = stories
+    desks = {}
+    for story in remaining:
+        desks.setdefault(story["desk"], []).append(story)
     links = "".join(f'<a href="#{e(desk.lower())}">{e(desk)}</a>' for desk in desks)
-    sections = [f'<nav class="desks" aria-label="Browse market desks">{links}</nav>']
-    for desk in desks:
-        cards = []
-        for story in stories:
-            if story["desk"] != desk:
-                continue
-            cards.append(f"""<article><p class="meta">{e(story['source'])} · {e(story['reported'][:10])}</p>
-<h3><a href="{e(story['url'])}">{e(story['headline'])}</a></h3>
-<p>{e(story['summary'])}</p><a class="source" href="{e(story['url'])}">Read on Google News ↗</a></article>""")
-        sections.append(f'<section id="{e(desk.lower())}"><h2>{e(desk)}</h2><div class="grid">{"".join(cards)}</div></section>')
+    sections = ['<h2 class="section-label">Latest market news</h2>', story_card(lead, lead=True)]
+    if links:
+        sections.append(f'<nav class="desks" aria-label="Browse market desks">{links}</nav>')
+    for desk, desk_stories in desks.items():
+        cards = "".join(story_card(story) for story in desk_stories)
+        sections.append(f'<section id="{e(desk.lower())}"><h2>{e(desk)}</h2><div class="grid">{cards}</div></section>')
     before, _, rest = template.partition("<!-- stories -->")
     _, _, after = rest.partition("<!-- /stories -->")
     return before + "\n".join(sections) + after
+
+
+def story_card(story, lead=False):
+    style = ' class="story-lead"' if lead else ""
+    label = f"{e(story['desk'])} · " if lead else ""
+    return f"""<article{style}><p class="meta">{label}{e(story['source'])} · {e(story['reported'][:10])}</p>
+<h3><a href="{e(story['url'])}">{e(story['headline'])}</a></h3>
+<p>{e(story['summary'])}</p><a class="source" href="{e(story['url'])}">Read on Google News ↗</a></article>"""
 
 
 def revision(db):
@@ -68,7 +75,7 @@ def dashboard(db, deploy_failed=False):
     run = db.execute("SELECT * FROM runs ORDER BY rowid DESC LIMIT 1").fetchone()
     status = f"{run['at'][:16].replace('T', ' ')} UTC · {run['message']}" if run else "Waiting for the first research run"
     retry = ""
-    if deploy_failed:
+    if deploy_failed or (run and run["message"].startswith("Cloudflare upload failed")):
         retry = f"""<p role="alert">Saved on Oracle. The public site update failed.</p>
 <form method="post" action="/admin"><input type="hidden" name="csrf" value="{CSRF}">
 <button name="action" value="retry">Retry site update</button></form>"""
@@ -218,12 +225,24 @@ def main():
             print(f"Dashboard at http://127.0.0.1:{server.server_port}/admin", flush=True)
             server.serve_forever()
     else:
-        if args.command == "deploy":
-            try:
-                deploy_command()
-            except OSError as error:
-                parser.error(str(error))
-        refresh_public(deploy=args.command == "deploy")
+        deploy = args.command == "deploy"
+        try:
+            refresh_public(deploy=deploy)
+        except (OSError, subprocess.SubprocessError) as error:
+            if deploy:
+                with closing(database()) as db, db:
+                    db.execute("INSERT INTO runs VALUES (?, ?)", (
+                        now().isoformat(), f"Cloudflare upload failed: {error}"[:350]
+                    ))
+            parser.exit(1, f"{error}\n")
+        if deploy:
+            with closing(database()) as db, db:
+                last = db.execute("SELECT message FROM runs ORDER BY rowid DESC LIMIT 1").fetchone()
+                if last and "queued for upload" in last["message"]:
+                    message = last["message"].replace("queued for upload", "published", 1)
+                else:
+                    message = "Cloudflare upload complete"
+                db.execute("INSERT INTO runs VALUES (?, ?)", (now().isoformat(), message))
 
 
 if __name__ == "__main__":

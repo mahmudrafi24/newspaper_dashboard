@@ -44,7 +44,7 @@ The included Wrangler config builds the empty-state starter for the existing
 production deployments from GitHub in Workers Builds so a source push cannot
 replace the live edition with the starter.
 
-For the existing Worker, set `CLOUDFLARE_WORKER_NAME=newspaper-dashboard` in
+For the current public Worker, set `CLOUDFLARE_WORKER_NAME=notasmuchhyped` in
 `~/.config/tech-news/pages.env` and leave `CLOUDFLARE_PAGES_PROJECT` unset. Set
 `WRANGLER_BIN` to the absolute path to Wrangler. Use Wrangler authentication
 or set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in that same private
