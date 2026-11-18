@@ -1,6 +1,6 @@
-# Tech Brief dashboard and public site
+# Market Ledger dashboard and public site
 
-Editorial dashboard for the [Tech Brief bot](https://github.com/mahmudrafi24/news_bot). Review the original Google News link, edit the headline and summary, and publish or unpublish. The dashboard checks for new research every 30 seconds and prompts you to refresh so edits in progress are preserved.
+Editorial dashboard for the [Market Ledger bot](https://github.com/mahmudrafi24/news_bot). Review the original Google News link, edit the headline and summary, and publish or unpublish. The dashboard checks for new research every 30 seconds and prompts you to refresh so edits in progress are preserved.
 
 ## Oracle setup
 
@@ -29,3 +29,21 @@ To render a copy locally, run `python3 dashboard.py export`. Approved stories li
 That command belongs to Workers Builds. To use Cloudflare Pages, select **Workers & Pages → Create application → Pages**. For the live newsroom, use **Direct Upload** and deploy from Oracle as described above.
 
 To bootstrap a Pages project from GitHub instead, select **Pages → Connect to Git** and choose this repository. Set production branch to `main`, framework preset to **None**, build command to `sh build-pages.sh`, and build output directory to `public`. This build produces the public empty-state page and requires neither the bot repository nor a database. After the first build, turn off automatic production deployments before connecting Oracle so subsequent Git builds cannot replace the published stories. Oracle can still deploy to that Pages project with Wrangler.
+
+### Use the existing Cloudflare Worker
+
+The included Wrangler config builds the empty-state starter for the existing
+`newspaper-dashboard` Worker. Once Oracle controls publishing, disable automatic
+production deployments from GitHub in Workers Builds so a source push cannot
+replace the live edition with the starter.
+
+For the existing Worker, set `CLOUDFLARE_WORKER_NAME=newspaper-dashboard` in
+`~/.config/tech-news/pages.env` and leave `CLOUDFLARE_PAGES_PROJECT` unset. Set
+`WRANGLER_BIN` to the absolute path to Wrangler. Use Wrangler authentication
+or set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in that same private
+file with permission to deploy the Worker. Restart the dashboard service after
+changing the file. Publishing uploads the static export to the Worker.
+
+The Market Ledger edition uses a new `markets.sqlite` queue. The earlier tech
+edition's `news.sqlite` stays on disk. Use your Access-protected tunnel
+hostname for `/admin` and keep it separate from the public site.

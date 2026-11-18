@@ -28,19 +28,33 @@ def page(title, body, editor=False):
     script = '<script src="/dashboard.js" defer></script>' if editor else ""
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{e(title)} · Tech Brief</title><link rel="stylesheet" href="/style.css">{script}</head>
-<body><header><div class="wrap mast"><a class="logo" href="/">Tech<span>Brief</span></a>{nav}</div></header>
-<main class="wrap">{body}</main><footer class="wrap">Tech Brief · Technology news roundup</footer></body></html>"""
+<title>{e(title)} · Market Ledger</title><link rel="stylesheet" href="/style.css">{script}</head>
+<body><header><div class="wrap mast"><a class="logo" href="/">Market<span> Ledger</span></a>{nav}</div></header>
+<main class="wrap">{body}</main><footer class="wrap">Market Ledger · Trading and market news</footer></body></html>"""
 
 
 def public_page(db):
-    cards = []
-    for story in db.execute("SELECT * FROM stories WHERE state='published' ORDER BY published DESC"):
-        cards.append(f"""<article><p class="meta">{e(story['source'])} · {e(story['reported'][:10])}</p>
-<h2><a href="{e(story['url'])}">{e(story['headline'])}</a></h2>
+    stories = db.execute("""
+        SELECT * FROM stories WHERE state='published' ORDER BY reported DESC, id
+    """).fetchall()
+    template = (ROOT / "site" / "index.html").read_text()
+    if not stories:
+        return template
+    desks = list(dict.fromkeys(story["desk"] for story in stories))
+    links = "".join(f'<a href="#{e(desk.lower())}">{e(desk)}</a>' for desk in desks)
+    sections = [f'<nav class="desks" aria-label="Browse market desks">{links}</nav>']
+    for desk in desks:
+        cards = []
+        for story in stories:
+            if story["desk"] != desk:
+                continue
+            cards.append(f"""<article><p class="meta">{e(story['source'])} · {e(story['reported'][:10])}</p>
+<h3><a href="{e(story['url'])}">{e(story['headline'])}</a></h3>
 <p>{e(story['summary'])}</p><a class="source" href="{e(story['url'])}">Read on Google News ↗</a></article>""")
-    content = "".join(cards) or '<p class="empty">No stories have been published yet.</p>'
-    return page("Technology news", f'<h1>Latest in tech</h1><div class="grid">{content}</div>')
+        sections.append(f'<section id="{e(desk.lower())}"><h2>{e(desk)}</h2><div class="grid">{"".join(cards)}</div></section>')
+    before, _, rest = template.partition("<!-- stories -->")
+    _, _, after = rest.partition("<!-- /stories -->")
+    return before + "\n".join(sections) + after
 
 
 def revision(db):
@@ -62,7 +76,7 @@ def dashboard(db, deploy_failed=False):
         button = "Publish" if drafts else "Move to drafts"
         name = e(story["headline"])
         summary = e(story["summary"])
-        cards.append(f"""<article><p class="meta">{e(story['state'].title())} · {e(story['source'])} · {e(story['reported'][:10])}</p>
+        cards.append(f"""<article><p class="meta">{e(story['state'].title())} · {e(story['desk'])} · {e(story['source'])} · {e(story['reported'][:10])}</p>
 <p><a href="{e(story['url'])}">{e(story['original'])} ↗</a></p>
 <form method="post" action="/admin">
 <input type="hidden" name="csrf" value="{CSRF}"><input type="hidden" name="id" value="{e(story['id'])}">
@@ -170,13 +184,19 @@ def refresh_public(deploy=False):
     with closing(database()) as db, db, (DATA / "deploy.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         export(db)
-        project = os.environ.get("CLOUDFLARE_PAGES_PROJECT")
-        if deploy and project:
-            subprocess.run(
-                [os.environ.get("WRANGLER_BIN", "wrangler"), "pages", "deploy", str(PUBLIC),
-                 "--project-name=" + project, "--branch=main"],
-                cwd=ROOT, check=True, timeout=180
-            )
+        if deploy:
+            subprocess.run(deploy_command(), cwd=ROOT, check=True, timeout=180)
+
+
+def deploy_command():
+    project = os.environ.get("CLOUDFLARE_PAGES_PROJECT")
+    worker = os.environ.get("CLOUDFLARE_WORKER_NAME")
+    wrangler = os.environ.get("WRANGLER_BIN", "wrangler")
+    if worker and not project:
+        return [wrangler, "deploy", "--name", worker, "--assets", str(PUBLIC)]
+    if project and not worker:
+        return [wrangler, "pages", "deploy", str(PUBLIC), "--project-name=" + project, "--branch=main"]
+    raise OSError("Configure one Cloudflare target in pages.env")
 
 
 def main():
@@ -189,8 +209,11 @@ def main():
             print(f"Dashboard at http://127.0.0.1:{server.server_port}/admin", flush=True)
             server.serve_forever()
     else:
-        if args.command == "deploy" and not os.environ.get("CLOUDFLARE_PAGES_PROJECT"):
-            parser.error("Set CLOUDFLARE_PAGES_PROJECT before deploying")
+        if args.command == "deploy":
+            try:
+                deploy_command()
+            except OSError as error:
+                parser.error(str(error))
         refresh_public(deploy=args.command == "deploy")
 
 
