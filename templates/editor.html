@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editorial dashboard · Market Ledger</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/editor.css">
+<script src="/dashboard.js" defer></script>
+</head>
+<body class="editor">
+<header><div class="wrap mast"><a class="logo" href="/admin">Market<span> Ledger</span></a>
+<a href="https://notasmuchhyped.mahmudrafi.workers.dev/">View public site ↗</a></div></header>
+<main class="wrap">
+<div class="editor-heading">
+<div><h1>Editorial dashboard</h1><p>Review and approve stories before they appear on Market Ledger.</p></div>
+<div class="editor-run"><strong>Latest activity</strong><p data-revision="{{.Revision}}">{{.Status}}</p></div>
+</div>
+<p id="refresh-notice" class="editor-notice" role="status" hidden><a href="/admin?view={{.View}}&amp;page={{.Page}}">New research is ready. Refresh the queue.</a></p>
+{{if or .Pending .Failed}}
+<div class="editor-upload" role="status">
+<p>{{if .Failed}}Upload failed. The approved update is saved.{{else}}An approved update is awaiting upload.{{end}}</p>
+<form method="post" action="/admin"><input type="hidden" name="csrf" value="{{.CSRF}}">
+<button type="submit" name="action" value="retry">Retry site update</button></form></div>
+{{end}}
+<nav class="editor-tabs" aria-label="Story status">
+{{range .Tabs}}<a href="/admin?view={{.Key}}" {{if .Active}}aria-current="page"{{end}}>{{.Label}} <span>{{.Count}}</span></a>{{end}}
+</nav>
+<section aria-labelledby="queue-heading"><h2 id="queue-heading" class="editor-queue-heading">{{.Label}}</h2>
+{{range .Cards}}
+<article class="editor-card" data-editor-story>
+<div class="editor-card-top"><span class="editor-badge" data-state="{{.State}}">{{.Label}}</span>
+<span>{{.Desk}} · <time datetime="{{.Reported}}">{{.Date}}</time></span></div>
+<div class="editor-story">
+<div class="editor-preview"><p class="editor-kicker">Public preview</p>
+<h3 data-preview-headline>{{.Headline}}</h3><p data-preview-summary>{{.Summary}}</p>
+<p class="editor-source"><strong>{{.Source}}</strong><br>
+<a href="{{.URL}}" target="_blank" rel="noopener noreferrer">{{.Original}} ↗</a></p></div>
+{{if .Actions}}
+<form method="post" action="/admin">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
+{{if .Editable}}<label>Headline<input name="headline" value="{{.Headline}}" required maxlength="115"></label>
+<label>Summary<textarea name="summary" required maxlength="350">{{.Summary}}</textarea></label>{{end}}
+<div class="editor-actions">
+{{range .Actions}}<button type="submit" name="action" value="{{.Value}}" {{if eq .Value "publish"}}class="primary"{{else if ne .Value "save"}}formnovalidate{{end}}>{{.Label}}</button>{{end}}
+</div></form>
+{{end}}
+</div></article>
+{{else}}<p class="empty">{{if eq .View "review"}}New stories will appear here after an hourly research run.{{else}}There are no stories in this queue.{{end}}</p>{{end}}
+</section>
+{{if gt .Last 1}}
+<nav class="editor-tabs" aria-label="Queue pages">
+{{if .Previous}}<a href="/admin?view={{.View}}&amp;page={{.Previous}}">← Previous</a>{{end}}
+<span>Page {{.Page}} of {{.Last}}</span>
+{{if .Next}}<a href="/admin?view={{.View}}&amp;page={{.Next}}">Next →</a>{{end}}
+</nav>
+{{end}}
+</main><footer class="wrap">Market Ledger · Editorial dashboard</footer>
+</body>
+</html>

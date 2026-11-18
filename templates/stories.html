@@ -1,0 +1,13 @@
+{{define "story-card"}}
+<article{{if .Lead}} class="story-lead"{{end}}>
+<p class="meta">{{if .Lead}}{{.Story.Desk}} · {{end}}{{.Story.Source}} · {{.Story.Date}}</p>
+<h3><a href="{{.Story.URL}}">{{.Story.Headline}}</a></h3>
+<p>{{.Story.Summary}}</p><a class="source" href="{{.Story.URL}}">Read on Google News ↗</a>
+</article>
+{{end}}
+<h2 class="section-label">Latest market news</h2>
+{{template "story-card" .Lead}}
+{{if .Desks}}<nav class="desks" aria-label="Browse market desks">{{range .Desks}}<a href="#{{.ID}}">{{.Name}}</a>{{end}}</nav>{{end}}
+{{range .Desks}}<section id="{{.ID}}"><h2>{{.Name}}</h2><div class="grid">
+{{range .Cards}}{{template "story-card" .}}{{end}}
+</div></section>{{end}}
