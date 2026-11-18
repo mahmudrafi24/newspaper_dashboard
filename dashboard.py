@@ -12,7 +12,9 @@ import tempfile
 from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT.parent / "news_bot"))
+BOT_ROOT = ROOT.parent / "news_bot"
+SITE = BOT_ROOT / "site"
+sys.path.insert(0, str(BOT_ROOT))
 from story_store import DATA, database, now
 
 PUBLIC = ROOT / "public"
@@ -37,7 +39,7 @@ def public_page(db):
     stories = db.execute("""
         SELECT * FROM stories WHERE state='published' ORDER BY reported DESC, id
     """).fetchall()
-    template = (ROOT / "site" / "index.html").read_text()
+    template = (SITE / "index.html").read_text()
     if not stories:
         return template
     desks = list(dict.fromkeys(story["desk"] for story in stories))
@@ -92,8 +94,8 @@ def export(db):
     PUBLIC.mkdir(exist_ok=True)
     assets = {
         "index.html": public_page(db),
-        "style.css": (ROOT / "site" / "style.css").read_text(),
-        "october-market-review.html": (ROOT / "site" / "october-market-review.html").read_text(),
+        "style.css": (SITE / "style.css").read_text(),
+        "october-market-review.html": (SITE / "october-market-review.html").read_text(),
     }
     for name, content in assets.items():
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=PUBLIC, delete=False) as output:
@@ -123,9 +125,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path).path
         if path == "/style.css":
-            self.respond((ROOT / "site" / "style.css").read_text(), "text/css; charset=utf-8")
+            self.respond((SITE / "style.css").read_text(), "text/css; charset=utf-8")
         elif path == "/october-market-review.html":
-            self.respond((ROOT / "site" / "october-market-review.html").read_text())
+            self.respond((SITE / "october-market-review.html").read_text())
         elif path == "/dashboard.js":
             self.respond((ROOT / "dashboard.js").read_text(), "text/javascript; charset=utf-8")
         elif path == "/admin/revision":
